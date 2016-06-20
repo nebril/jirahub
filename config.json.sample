@@ -1,0 +1,11 @@
+{
+	"JIRAUsername": "username",
+	"JIRAPassword": "pass",
+	"JIRAHost": "host",
+	"GitHubLinkFieldName": "name",
+	"GitHubLinkFieldID": "customfield_id",
+	"GitHubLabelsRelevantToSearch": ["label"],
+	"GitHubPreloadRepoOwner": "foo",
+	"GitHubPreloadRepoName": "bar",
+	"GitHubUsers": ["foo", "bar"]
+}

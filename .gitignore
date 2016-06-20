@@ -22,3 +22,9 @@ _testmain.go
 *.exe
 *.test
 *.prof
+
+# Config file
+config.json
+
+# Delve debug dir
+debug
