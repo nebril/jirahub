@@ -90,7 +90,7 @@ func getPRByLink(link string) (*github.PullRequest, error) {
 }
 
 func getOpenPRTickets() ([]jira.Issue, error) {
-	jql := fmt.Sprintf("%s != \"\"", config.GitHubLinkFieldName)
+	jql := fmt.Sprintf("%s != \"\" AND status != \"Done\" AND status != \"In QA\"", config.GitHubLinkFieldName)
 	results := 50
 	opt := &jira.SearchOptions{StartAt: 0, MaxResults: results}
 	allIssues := make([]jira.Issue, 0)
@@ -119,7 +119,7 @@ func initiateClients() error {
 	}
 
 	var res bool
-	res, err = jc.Authentication.AcquireSessionCookie(config.JIRAUsername, config.JIRAPassword) //TODO: move user/pass to config file
+	res, err = jc.Authentication.AcquireSessionCookie(config.JIRAUsername, config.JIRAPassword)
 	if err != nil || res == false {
 		return err
 	}
@@ -127,29 +127,44 @@ func initiateClients() error {
 	return err
 }
 
-func changeTicketStatusBasedOnPR(ticket jira.Issue, issuesPreloaded []github.Issue, wg *sync.WaitGroup) error {
+func changeTicketStatusBasedOnPR(ticket jira.Issue, issuesPreloaded []github.Issue, wg *sync.WaitGroup) {
 	defer wg.Done()
 	link, err := getPRLink(ticket)
-	fmt.Println(link)
+	fmt.Println(ticket.Key, link)
 	if err != nil {
-		return err
+		fmt.Println(err)
+		return
 	}
 
 	pr, err := getPRByLink(link)
 	if err != nil {
-		return err
+		fmt.Printf("%s Failed to load PR: \"%s\"\n", ticket.Key, err)
+		return
 	}
 
-	if isDone(pr) {
-		//TODO: change ticket state to done
-		return nil
-	} else if isReviewed(pr, issuesPreloaded) {
-		//TODO: change ticket state to "ready to merge"
-		return nil
-	} else {
-		//TODO: change ticket state to "in progress"
-		return nil
+	transitions, _, err := jiraClient.Transition.GetList(ticket.ID)
+	if err != nil {
+		fmt.Println(err)
+		return
 	}
+
+	if isDone(pr) && !isTicketDone(&ticket) {
+		err = changeTicketStatus(&ticket, "Done", transitions)
+	} else if isReviewed(pr, issuesPreloaded) && !isTicketReviewed(&ticket) {
+		err = changeTicketStatus(&ticket, "Ready to Merge", transitions)
+	} else if !isTicketInProgress(&ticket) {
+		if ticket.Fields.Type.Name == "Bug" {
+			err = changeTicketStatus(&ticket, "In Progress", transitions)
+		} else if ticket.Fields.Type.Name == "User Story" {
+			err = changeTicketStatus(&ticket, "Start Development", transitions)
+		} else {
+			err = fmt.Errorf("%s Wrong issue type found: %s", ticket.Key, ticket.Fields.Type.Name)
+		}
+	}
+	if err != nil {
+		fmt.Println(err)
+	}
+	return
 }
 
 func getPRLink(ticket jira.Issue) (string, error) {
@@ -163,6 +178,10 @@ func getPRLink(ticket jira.Issue) (string, error) {
 
 func isDone(pr *github.PullRequest) bool {
 	return *pr.Merged
+}
+
+func isTicketDone(ticket *jira.Issue) bool {
+	return ticket.Fields.Status.Name == "Done" || ticket.Fields.Status.Name == "In QA"
 }
 
 func isReviewed(pr *github.PullRequest, issuesPreloaded []github.Issue) bool {
@@ -179,11 +198,36 @@ func isReviewed(pr *github.PullRequest, issuesPreloaded []github.Issue) bool {
 	}
 
 	for _, label := range found.Labels {
-		if strings.Compare(*label.Name, "lgtm") == 0 { //TODO: Move this to config
+		if *label.Name == "lgtm" { //TODO: Move this to config
 			return true
 		}
 	}
 	return false
+}
+
+func isTicketReviewed(ticket *jira.Issue) bool {
+	return ticket.Fields.Status.Name == "Ready to Merge"
+}
+
+func isTicketInProgress(ticket *jira.Issue) bool {
+	return ticket.Fields.Status.Name == "In Development" || ticket.Fields.Status.Name == "In Progress"
+}
+
+// Create new JIRA transition for issue, based on transition name provided in `status` parameter and preloaded transitions
+func changeTicketStatus(ticket *jira.Issue, status string, transitions []jira.Transition) error {
+	fmt.Printf("Changing %s status to %s\n", ticket.Key, status)
+	var found *jira.Transition
+
+	for _, transition := range transitions {
+		if status == transition.Name {
+			found = &transition
+			break
+		}
+	}
+
+	jiraClient.Transition.Create(ticket.ID, found.ID)
+
+	return nil
 }
 
 func initConfig(path string) error {
