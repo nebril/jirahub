@@ -7,5 +7,7 @@
 	"GitHubLabelsRelevantToSearch": ["label"],
 	"GitHubPreloadRepoOwner": "foo",
 	"GitHubPreloadRepoName": "bar",
-	"GitHubUsers": ["foo", "bar"]
+	"GitHubUsers": ["foo", "bar"],
+	"GitHubUsername": "username",
+	"GitHubPassword": "password"
 }

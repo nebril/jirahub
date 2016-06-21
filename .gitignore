@@ -28,3 +28,6 @@ config.json
 
 # Delve debug dir
 debug
+
+# default binary name
+main

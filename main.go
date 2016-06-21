@@ -27,6 +27,8 @@ type Configuration struct {
 	GitHubUsers                  []string
 	GitHubPreloadRepoName        string
 	GitHubPreloadRepoOwner       string
+	GitHubUsername               string
+	GitHubPassword               string
 }
 
 var config Configuration
@@ -111,7 +113,11 @@ func getOpenPRTickets() ([]jira.Issue, error) {
 }
 
 func initiateClients() error {
-	githubClient = github.NewClient(nil)
+	tp := github.BasicAuthTransport{
+		Username: config.GitHubUsername,
+		Password: config.GitHubPassword,
+	}
+	githubClient = github.NewClient(tp.Client())
 
 	jc, err := jira.NewClient(nil, config.JIRAHost)
 	if err != nil {
