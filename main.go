@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/google/go-github/github"
+	//"github.com/kr/pretty"
 	"github.com/nebril/go-jira"
 )
 
@@ -33,7 +34,7 @@ type Configuration struct {
 
 var config Configuration
 
-func getOpenPRsByPeople(people []string, owner, repository string, labels []string) ([]github.Issue, error) {
+func getOpenPRIssuesByPeople(people []string, owner, repository string, labels []string) ([]github.Issue, error) {
 
 	opt := &github.IssueListByRepoOptions{
 		Creator:     "",
@@ -46,13 +47,46 @@ func getOpenPRsByPeople(people []string, owner, repository string, labels []stri
 	for _, user := range people {
 		opt.Creator = user
 		opt.ListOptions.Page = 1
-		page, resp, err := githubClient.Issues.ListByRepo(owner, repository, opt)
+		for {
+			page, resp, err := githubClient.Issues.ListByRepo(owner, repository, opt)
+
+			if err != nil {
+				fmt.Printf("\nerror: %v\n", err)
+				return nil, err
+			}
+			allPulls = append(allPulls, page...)
+
+			if resp.NextPage == 0 {
+				break
+			}
+			opt.ListOptions.Page = resp.NextPage
+		}
+	}
+
+	return allPulls, nil
+}
+
+func getOpenPRsByPeople(people []string, owner, repository string) ([]github.PullRequest, error) {
+	opt := &github.PullRequestListOptions{
+		ListOptions: github.ListOptions{PerPage: 100, Page: 1},
+	}
+
+	allPulls := make([]github.PullRequest, 0)
+
+	for {
+		page, resp, err := githubClient.PullRequests.List(owner, repository, opt)
 
 		if err != nil {
 			fmt.Printf("\nerror: %v\n", err)
 			return nil, err
 		}
-		allPulls = append(allPulls, page...)
+		for _, pull := range page {
+			for _, user := range people {
+				if *pull.User.Login == user {
+					allPulls = append(allPulls, pull)
+				}
+			}
+		}
 
 		if resp.NextPage == 0 {
 			break
@@ -63,7 +97,15 @@ func getOpenPRsByPeople(people []string, owner, repository string, labels []stri
 	return allPulls, nil
 }
 
-func getPRByLink(link string) (*github.PullRequest, error) {
+func getPRByLink(link string, pullRequestsPreloaded []github.PullRequest) (*github.PullRequest, error) {
+	var found github.PullRequest
+	for _, pr := range pullRequestsPreloaded {
+		if strings.Trim(*pr.HTMLURL, "/") == strings.Trim(link, "/") {
+			found = pr
+			return &found, nil
+		}
+	}
+
 	owner, repo, id, err := getURLParts(link)
 	if err != nil {
 		return nil, err
@@ -121,7 +163,7 @@ func initiateClients() error {
 	return err
 }
 
-func changeTicketStatusBasedOnPR(ticket jira.Issue, issuesPreloaded []github.Issue, wg *sync.WaitGroup) {
+func changeTicketStatusBasedOnPR(ticket jira.Issue, issuesPreloaded []github.Issue, pullRequestsPreloaded []github.PullRequest, wg *sync.WaitGroup) {
 	defer wg.Done()
 	link, err := getPRLink(ticket)
 	if err != nil {
@@ -129,7 +171,7 @@ func changeTicketStatusBasedOnPR(ticket jira.Issue, issuesPreloaded []github.Iss
 		return
 	}
 
-	pr, err := getPRByLink(link)
+	pr, err := getPRByLink(link, pullRequestsPreloaded)
 	if err != nil {
 		fmt.Printf("%s Failed to load PR: \"%s\"\n", ticket.Key, err)
 		return
@@ -178,7 +220,7 @@ func getPRLink(ticket jira.Issue) (string, error) {
 }
 
 func isDone(pr *github.PullRequest) bool {
-	return *pr.Merged
+	return pr.MergedAt != nil
 }
 
 func isTicketDone(ticket *jira.Issue) bool {
@@ -189,7 +231,6 @@ func isReviewed(pr *github.PullRequest, issuesPreloaded []github.Issue) bool {
 	var err error
 	var found *github.Issue
 	for _, issue := range issuesPreloaded {
-		fmt.Println("Comparing", issue.Number, "with", pr.Number)
 		if issue.Number == pr.Number {
 			found = &issue
 			break
@@ -300,16 +341,23 @@ func main() {
 		return
 	}
 
-	//TODO: preload also PRs
-	ourIssues, err := getOpenPRsByPeople(config.GitHubUsers, config.GitHubPreloadRepoOwner, config.GitHubPreloadRepoName, config.GitHubLabelsRelevantToSearch)
+	ourIssues, err := getOpenPRIssuesByPeople(config.GitHubUsers, config.GitHubPreloadRepoOwner, config.GitHubPreloadRepoName, config.GitHubLabelsRelevantToSearch)
+
 	if err != nil {
 		fmt.Printf("\n%v\n", err)
 		return
 	}
+
+	ourPulls, err := getOpenPRsByPeople(config.GitHubUsers, config.GitHubPreloadRepoOwner, config.GitHubPreloadRepoName)
+	if err != nil {
+		fmt.Printf("\n%v\n", err)
+		return
+	}
+
 	var wg sync.WaitGroup
 	wg.Add(len(tickets))
 	for _, ticket := range tickets {
-		go changeTicketStatusBasedOnPR(ticket, ourIssues, &wg)
+		go changeTicketStatusBasedOnPR(ticket, ourIssues, ourPulls, &wg)
 	}
 	wg.Wait()
 }
