@@ -31,3 +31,4 @@ debug
 
 # default binary name
 main
+build-deploy.sh

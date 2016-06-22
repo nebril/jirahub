@@ -64,20 +64,7 @@ func getOpenPRsByPeople(people []string, owner, repository string, labels []stri
 }
 
 func getPRByLink(link string) (*github.PullRequest, error) {
-	u, err := url.Parse(link)
-	if err != nil {
-		fmt.Printf("\nerror: %v\n", err)
-		return nil, err
-	}
-
-	elements := strings.Split(strings.Trim(u.Path, "/"), "/")
-	if len(elements) != 4 {
-		return nil, errors.New(fmt.Sprintf(
-			"Path to PR has wrong number of elements. Expected 4, got %v in %v.", len(elements), u.Path))
-	}
-	owner := elements[0]
-	repo := elements[1]
-	id, err := strconv.Atoi(elements[3])
+	owner, repo, id, err := getURLParts(link)
 	if err != nil {
 		return nil, err
 	}
@@ -93,6 +80,7 @@ func getPRByLink(link string) (*github.PullRequest, error) {
 
 func getOpenPRTickets() ([]jira.Issue, error) {
 	jql := fmt.Sprintf("%s != \"\" AND status != \"Done\" AND status != \"In QA\"", config.GitHubLinkFieldName)
+	//jql := "key = \"MCP-624\""
 	results := 50
 	opt := &jira.SearchOptions{StartAt: 0, MaxResults: results}
 	allIssues := make([]jira.Issue, 0)
@@ -136,7 +124,6 @@ func initiateClients() error {
 func changeTicketStatusBasedOnPR(ticket jira.Issue, issuesPreloaded []github.Issue, wg *sync.WaitGroup) {
 	defer wg.Done()
 	link, err := getPRLink(ticket)
-	fmt.Println(ticket.Key, link)
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -154,10 +141,18 @@ func changeTicketStatusBasedOnPR(ticket jira.Issue, issuesPreloaded []github.Iss
 		return
 	}
 
-	if isDone(pr) && !isTicketDone(&ticket) {
-		err = changeTicketStatus(&ticket, "Done", transitions)
-	} else if isReviewed(pr, issuesPreloaded) && !isTicketReviewed(&ticket) {
-		err = changeTicketStatus(&ticket, "Ready to Merge", transitions)
+	if isDone(pr) {
+		if isTicketDone(&ticket) {
+			return
+		} else {
+			err = changeTicketStatus(&ticket, "Done", transitions)
+		}
+	} else if isReviewed(pr, issuesPreloaded) {
+		if isTicketReviewed(&ticket) {
+			return
+		} else {
+			err = changeTicketStatus(&ticket, "Ready to Merge", transitions)
+		}
 	} else if !isTicketInProgress(&ticket) {
 		if ticket.Fields.Type.Name == "Bug" {
 			err = changeTicketStatus(&ticket, "In Progress", transitions)
@@ -191,8 +186,10 @@ func isTicketDone(ticket *jira.Issue) bool {
 }
 
 func isReviewed(pr *github.PullRequest, issuesPreloaded []github.Issue) bool {
+	var err error
 	var found *github.Issue
 	for _, issue := range issuesPreloaded {
+		fmt.Println("Comparing", issue.Number, "with", pr.Number)
 		if issue.Number == pr.Number {
 			found = &issue
 			break
@@ -200,7 +197,11 @@ func isReviewed(pr *github.PullRequest, issuesPreloaded []github.Issue) bool {
 	}
 
 	if found == nil {
-		return false //TODO: possibly PR from other repo, retrieve it from github
+		found, err = getIssueFromPR(pr)
+		if err != nil {
+			fmt.Println(err)
+			return false
+		}
 	}
 
 	for _, label := range found.Labels {
@@ -236,6 +237,15 @@ func changeTicketStatus(ticket *jira.Issue, status string, transitions []jira.Tr
 	return nil
 }
 
+func getIssueFromPR(pr *github.PullRequest) (*github.Issue, error) {
+	owner, repo, id, err := getURLParts(*pr.HTMLURL)
+	if err != nil {
+		return nil, err
+	}
+	issue, _, err := githubClient.Issues.Get(owner, repo, id)
+	return issue, err
+}
+
 func initConfig(path string) error {
 	file, err := os.Open("config.json")
 	if err != nil {
@@ -247,6 +257,28 @@ func initConfig(path string) error {
 		return err
 	}
 	return nil
+}
+
+//Retrieves owner, repository name and issue/PR number from GitHub URL
+func getURLParts(link string) (string, string, int, error) {
+	u, err := url.Parse(link)
+	if err != nil {
+		return "", "", 0, err
+	}
+
+	elements := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if len(elements) != 4 {
+		return "", "", 0, errors.New(fmt.Sprintf(
+			"Path to PR has wrong number of elements. Expected 4, got %v in %v.",
+			len(elements), u.Path))
+	}
+	owner := elements[0]
+	repo := elements[1]
+	id, err := strconv.Atoi(elements[3])
+	if err != nil {
+		return "", "", 0, err
+	}
+	return owner, repo, id, nil
 }
 
 func main() {
@@ -268,7 +300,8 @@ func main() {
 		return
 	}
 
-	ourIssues, err := getOpenPRsByPeople(config.GitHubUsers, config.GitHubPreloadRepoOwner, config.GitHubPreloadRepoName, config.GitHubUsers)
+	//TODO: preload also PRs
+	ourIssues, err := getOpenPRsByPeople(config.GitHubUsers, config.GitHubPreloadRepoOwner, config.GitHubPreloadRepoName, config.GitHubLabelsRelevantToSearch)
 	if err != nil {
 		fmt.Printf("\n%v\n", err)
 		return
