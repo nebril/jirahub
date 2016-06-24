@@ -9,5 +9,12 @@
 	"GitHubPreloadRepoName": "bar",
 	"GitHubUsers": ["foo", "bar"],
 	"GitHubUsername": "username",
-	"GitHubPassword": "password"
+	"GitHubPassword": "password",
+	"GitHubJIRAUserMapping": {
+		"foo": "foo",
+		"bar": "bar"
+	},
+	"TimeForCreatingJIRATicket": 86400,
+	"JIRATeamID": "1337",
+	"JIRABoardID": "667"
 }

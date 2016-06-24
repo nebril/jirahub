@@ -9,9 +9,9 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/go-github/github"
-	//"github.com/kr/pretty"
 	"github.com/nebril/go-jira"
 )
 
@@ -30,6 +30,10 @@ type Configuration struct {
 	GitHubPreloadRepoOwner       string
 	GitHubUsername               string
 	GitHubPassword               string
+	GitHubJIRAUserMapping        map[string]string
+	TimeForCreatingJIRATicket    int64
+	JIRATeamID                   string
+	JIRABoardID                  string
 }
 
 var config Configuration
@@ -122,7 +126,6 @@ func getPRByLink(link string, pullRequestsPreloaded []github.PullRequest) (*gith
 
 func getOpenPRTickets() ([]jira.Issue, error) {
 	jql := fmt.Sprintf("%s != \"\" AND status != \"Done\" AND status != \"In QA\"", config.GitHubLinkFieldName)
-	//jql := "key = \"MCP-624\""
 	results := 50
 	opt := &jira.SearchOptions{StartAt: 0, MaxResults: results}
 	allIssues := make([]jira.Issue, 0)
@@ -163,9 +166,10 @@ func initiateClients() error {
 	return err
 }
 
-func changeTicketStatusBasedOnPR(ticket jira.Issue, issuesPreloaded []github.Issue, pullRequestsPreloaded []github.PullRequest, wg *sync.WaitGroup) {
+func changeTicketStatusBasedOnPR(ticket jira.Issue, issuesPreloaded []github.Issue, pullRequestsPreloaded []github.PullRequest, linkChannel chan string, wg *sync.WaitGroup) {
 	defer wg.Done()
 	link, err := getPRLink(ticket)
+	linkChannel <- link
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -322,6 +326,78 @@ func getURLParts(link string) (string, string, int, error) {
 	return owner, repo, id, nil
 }
 
+//Generate JIRA issues for pull requests without ticket that are older than time specified in config
+func generateJIRAIssues(tickets []jira.Issue, pulls []github.PullRequest, linkedPRLinks []string) error {
+	sprints, _, err := jiraClient.Sprint.GetList(config.JIRABoardID)
+	if err != nil {
+		return err
+	}
+	var activeSprint jira.Sprint
+
+	for _, sprint := range sprints {
+		if sprint.State == "active" {
+			activeSprint = sprint
+			break
+		}
+	}
+
+	var wg sync.WaitGroup
+	for _, pr := range pulls {
+		isLinked := false
+		for _, link := range linkedPRLinks {
+			if strings.Trim(*pr.HTMLURL, "/") == strings.Trim(link, "/") {
+				isLinked = true
+				break
+			}
+		}
+		if !isLinked && isOldEnough(&pr) {
+			wg.Add(1)
+			go createNewJIRAIssueFromPR(&pr, &activeSprint, &wg)
+		}
+	}
+	wg.Wait()
+	return nil
+}
+
+//Checks if the pull request was created long enough ago to create new JIRA ticket
+func isOldEnough(pr *github.PullRequest) bool {
+	return time.Now().Unix()-pr.CreatedAt.Unix() > config.TimeForCreatingJIRATicket
+}
+
+func createNewJIRAIssueFromPR(pr *github.PullRequest, sprint *jira.Sprint, wg *sync.WaitGroup) {
+	defer wg.Done()
+	jql := fmt.Sprintf("%s != \"%s\"", config.GitHubLinkFieldName, *pr.HTMLURL)
+	opt := &jira.SearchOptions{StartAt: 0, MaxResults: 1}
+
+	issues, _, err := jiraClient.Issue.Search(jql, opt)
+	if len(issues) > 0 {
+		fmt.Printf("Found existing issue for %s: %s, not creating new one\n", *pr.HTMLURL, issues[0].Key)
+		return
+	}
+
+	//using overriden Issue type from issue_override.go
+	i := &Issue{Fields: &IssueFields{
+		Type:        jira.IssueType{Name: "Bug"}, //TODO: move these to config
+		Project:     jira.Project{Key: "MCP"},
+		Summary:     *pr.Title,
+		Description: *pr.Body,
+		GH_PR_link:  *pr.HTMLURL,
+		Assignee:    &jira.User{Name: config.GitHubJIRAUserMapping[*pr.User.Login]},
+		Team:        Team{ID: config.JIRATeamID},
+	}}
+
+	issue, _, err := CreateWithGH_PR_link(jiraClient, i)
+	if err != nil {
+		fmt.Println("Could not create issue: ", err)
+	}
+	fmt.Printf("Created %s for %s\n", issue.Key, *pr.HTMLURL)
+
+	_, err = jiraClient.Sprint.AddIssuesToSprint(sprint.ID, []string{issue.Key})
+	if err != nil {
+		fmt.Println("Could not move issue to sprint:", err)
+	}
+}
+
 func main() {
 	err := initConfig("config.json")
 	if err != nil {
@@ -355,9 +431,20 @@ func main() {
 	}
 
 	var wg sync.WaitGroup
+	linkChan := make(chan string)
 	wg.Add(len(tickets))
 	for _, ticket := range tickets {
-		go changeTicketStatusBasedOnPR(ticket, ourIssues, ourPulls, &wg)
+		go changeTicketStatusBasedOnPR(ticket, ourIssues, ourPulls, linkChan, &wg)
 	}
+
+	links := make([]string, len(tickets))
+	for index, _ := range tickets {
+		links[index] = <-linkChan
+	}
+	err = generateJIRAIssues(tickets, ourPulls, links)
 	wg.Wait()
+	if err != nil {
+		fmt.Printf("\n%v\n", err)
+		return
+	}
 }
