@@ -38,7 +38,7 @@ type Configuration struct {
 
 var config Configuration
 
-func getOpenPRIssuesByPeople(people []string, owner, repository string, labels []string) ([]github.Issue, error) {
+func getOpenPRIssuesByPeople(people []string, owner, repository string, labels []string) ([]*github.Issue, error) {
 
 	opt := &github.IssueListByRepoOptions{
 		Creator:     "",
@@ -46,7 +46,7 @@ func getOpenPRIssuesByPeople(people []string, owner, repository string, labels [
 		ListOptions: github.ListOptions{PerPage: 100, Page: 1},
 	}
 
-	allPulls := make([]github.Issue, 0)
+	allPulls := make([]*github.Issue, 0)
 
 	for _, user := range people {
 		opt.Creator = user
@@ -70,12 +70,12 @@ func getOpenPRIssuesByPeople(people []string, owner, repository string, labels [
 	return allPulls, nil
 }
 
-func getOpenPRsByPeople(people []string, owner, repository string) ([]github.PullRequest, error) {
+func getOpenPRsByPeople(people []string, owner, repository string) ([]*github.PullRequest, error) {
 	opt := &github.PullRequestListOptions{
 		ListOptions: github.ListOptions{PerPage: 100, Page: 1},
 	}
 
-	allPulls := make([]github.PullRequest, 0)
+	allPulls := make([]*github.PullRequest, 0)
 
 	for {
 		page, resp, err := githubClient.PullRequests.List(owner, repository, opt)
@@ -101,12 +101,12 @@ func getOpenPRsByPeople(people []string, owner, repository string) ([]github.Pul
 	return allPulls, nil
 }
 
-func getPRByLink(link string, pullRequestsPreloaded []github.PullRequest) (*github.PullRequest, error) {
-	var found github.PullRequest
+func getPRByLink(link string, pullRequestsPreloaded []*github.PullRequest) (*github.PullRequest, error) {
+	var found *github.PullRequest
 	for _, pr := range pullRequestsPreloaded {
 		if strings.Trim(*pr.HTMLURL, "/") == strings.Trim(link, "/") {
 			found = pr
-			return &found, nil
+			return found, nil
 		}
 	}
 
@@ -166,7 +166,7 @@ func initiateClients() error {
 	return err
 }
 
-func changeTicketStatusBasedOnPR(ticket jira.Issue, issuesPreloaded []github.Issue, pullRequestsPreloaded []github.PullRequest, linkChannel chan string, wg *sync.WaitGroup) {
+func changeTicketStatusBasedOnPR(ticket jira.Issue, issuesPreloaded []*github.Issue, pullRequestsPreloaded []*github.PullRequest, linkChannel chan string, wg *sync.WaitGroup) {
 	defer wg.Done()
 	link, err := getPRLink(ticket)
 	linkChannel <- link
@@ -231,12 +231,12 @@ func isTicketDone(ticket *jira.Issue) bool {
 	return ticket.Fields.Status.Name == "Done" || ticket.Fields.Status.Name == "In QA"
 }
 
-func isReviewed(pr *github.PullRequest, issuesPreloaded []github.Issue) bool {
+func isReviewed(pr *github.PullRequest, issuesPreloaded []*github.Issue) bool {
 	var err error
 	var found *github.Issue
 	for _, issue := range issuesPreloaded {
 		if issue.Number == pr.Number {
-			found = &issue
+			found = issue
 			break
 		}
 	}
@@ -327,7 +327,7 @@ func getURLParts(link string) (string, string, int, error) {
 }
 
 //Generate JIRA issues for pull requests without ticket that are older than time specified in config
-func generateJIRAIssues(tickets []jira.Issue, pulls []github.PullRequest, linkedPRLinks []string) error {
+func generateJIRAIssues(tickets []jira.Issue, pulls []*github.PullRequest, linkedPRLinks []string) error {
 	sprints, _, err := jiraClient.Sprint.GetList(config.JIRABoardID)
 	if err != nil {
 		return err
@@ -350,9 +350,9 @@ func generateJIRAIssues(tickets []jira.Issue, pulls []github.PullRequest, linked
 				break
 			}
 		}
-		if !isLinked && isOldEnough(&pr) {
+		if !isLinked && isOldEnough(pr) {
 			wg.Add(1)
-			go createNewJIRAIssueFromPR(&pr, &activeSprint, &wg)
+			go createNewJIRAIssueFromPR(pr, &activeSprint, &wg)
 		}
 	}
 	wg.Wait()
@@ -378,7 +378,7 @@ func createNewJIRAIssueFromPR(pr *github.PullRequest, sprint *jira.Sprint, wg *s
 	//using overriden Issue type from issue_override.go
 	i := &Issue{Fields: &IssueFields{
 		Type:        jira.IssueType{Name: "Bug"}, //TODO: move these to config
-		Project:     jira.Project{Key: "MCP"},
+		Project:     jira.Project{Key: "PROD"},
 		Summary:     *pr.Title,
 		Description: *pr.Body,
 		GH_PR_link:  *pr.HTMLURL,
