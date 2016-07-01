@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -34,6 +35,8 @@ type Configuration struct {
 	TimeForCreatingJIRATicket    int64
 	JIRATeamID                   string
 	JIRABoardID                  string
+	JIRAProjectKey               string
+	JIRANewIssueType             string
 }
 
 var config Configuration
@@ -277,6 +280,10 @@ func changeTicketStatus(ticket *jira.Issue, status string, transitions []jira.Tr
 		}
 	}
 
+	if found == nil {
+		return fmt.Errorf("Transition for %s to %s not found", ticket.Key, status)
+	}
+
 	jiraClient.Transition.Create(ticket.ID, found.ID)
 
 	return nil
@@ -352,7 +359,7 @@ func generateJIRAIssues(tickets []jira.Issue, pulls []github.PullRequest, linked
 		}
 		if !isLinked && isOldEnough(&pr) {
 			wg.Add(1)
-			go createNewJIRAIssueFromPR(&pr, &activeSprint, &wg)
+			go createNewJIRAIssueFromPR(pr, &activeSprint, &wg)
 		}
 	}
 	wg.Wait()
@@ -364,9 +371,9 @@ func isOldEnough(pr *github.PullRequest) bool {
 	return time.Now().Unix()-pr.CreatedAt.Unix() > config.TimeForCreatingJIRATicket
 }
 
-func createNewJIRAIssueFromPR(pr *github.PullRequest, sprint *jira.Sprint, wg *sync.WaitGroup) {
+func createNewJIRAIssueFromPR(pr github.PullRequest, sprint *jira.Sprint, wg *sync.WaitGroup) {
 	defer wg.Done()
-	jql := fmt.Sprintf("%s != \"%s\"", config.GitHubLinkFieldName, *pr.HTMLURL)
+	jql := fmt.Sprintf("%s == \"%s\"", config.GitHubLinkFieldName, *pr.HTMLURL)
 	opt := &jira.SearchOptions{StartAt: 0, MaxResults: 1}
 
 	issues, _, err := jiraClient.Issue.Search(jql, opt)
@@ -377,8 +384,8 @@ func createNewJIRAIssueFromPR(pr *github.PullRequest, sprint *jira.Sprint, wg *s
 
 	//using overriden Issue type from issue_override.go
 	i := &Issue{Fields: &IssueFields{
-		Type:        jira.IssueType{Name: "Bug"}, //TODO: move these to config
-		Project:     jira.Project{Key: "MCP"},
+		Type:        jira.IssueType{Name: config.JIRANewIssueType},
+		Project:     jira.Project{Key: config.JIRAProjectKey},
 		Summary:     *pr.Title,
 		Description: *pr.Body,
 		GH_PR_link:  *pr.HTMLURL,
@@ -386,9 +393,12 @@ func createNewJIRAIssueFromPR(pr *github.PullRequest, sprint *jira.Sprint, wg *s
 		Team:        Team{ID: config.JIRATeamID},
 	}}
 
-	issue, _, err := CreateWithGH_PR_link(jiraClient, i)
+	issue, resp, err := CreateWithGH_PR_link(jiraClient, i)
 	if err != nil {
-		fmt.Println("Could not create issue: ", err)
+		buf := new(bytes.Buffer)
+		buf.ReadFrom(resp.Body)
+		fmt.Println("Could not create issue: ", err, buf.String())
+		return
 	}
 	fmt.Printf("Created %s for %s\n", issue.Key, *pr.HTMLURL)
 
