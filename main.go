@@ -203,13 +203,7 @@ func changeTicketStatusBasedOnPR(ticket jira.Issue, issuesPreloaded []github.Iss
 			err = changeTicketStatus(&ticket, "Ready to Merge", transitions)
 		}
 	} else if !isTicketInProgress(&ticket) {
-		if ticket.Fields.Type.Name == "Bug" {
-			err = changeTicketStatus(&ticket, "In Progress", transitions)
-		} else if ticket.Fields.Type.Name == "User Story" {
-			err = changeTicketStatus(&ticket, "Start Development", transitions)
-		} else {
-			err = fmt.Errorf("%s Wrong issue type found: %s", ticket.Key, ticket.Fields.Type.Name)
-		}
+		err = changeTicketStatus(&ticket, "Start Development", transitions)
 	}
 	if err != nil {
 		fmt.Println(err)
@@ -265,7 +259,7 @@ func isTicketReviewed(ticket *jira.Issue) bool {
 }
 
 func isTicketInProgress(ticket *jira.Issue) bool {
-	return ticket.Fields.Status.Name == "In Development" || ticket.Fields.Status.Name == "In Progress"
+	return ticket.Fields.Status.Name == "In Development"
 }
 
 // Create new JIRA transition for issue, based on transition name provided in `status` parameter and preloaded transitions
