@@ -194,16 +194,32 @@ func changeTicketStatusBasedOnPR(ticket jira.Issue, issuesPreloaded []github.Iss
 		if isTicketDone(&ticket) {
 			return
 		} else {
-			err = changeTicketStatus(&ticket, "Done", transitions)
+			fields := map[string]jira.TransitionField{
+				"resolution": jira.TransitionField{
+					Name: "Done",
+				},
+			}
+			err = changeTicketStatus(&ticket, "Done", transitions, fields)
+		}
+	} else if isClosed(pr) {
+		if isTicketDone(&ticket) {
+			return
+		} else {
+			fields := map[string]jira.TransitionField{
+				"resolution": jira.TransitionField{
+					Name: "Won't Do",
+				},
+			}
+			err = changeTicketStatus(&ticket, "Done", transitions, fields)
 		}
 	} else if isReviewed(pr, issuesPreloaded) {
 		if isTicketReviewed(&ticket) {
 			return
 		} else {
-			err = changeTicketStatus(&ticket, "Ready to Merge", transitions)
+			err = changeTicketStatus(&ticket, "Ready to Merge", transitions, nil)
 		}
 	} else if !isTicketInProgress(&ticket) {
-		err = changeTicketStatus(&ticket, "Start Development", transitions)
+		err = changeTicketStatus(&ticket, "Start Development", transitions, nil)
 	}
 	if err != nil {
 		fmt.Println(err)
@@ -218,6 +234,10 @@ func getPRLink(ticket jira.Issue) (string, error) {
 	}
 
 	return customFields[config.GitHubLinkFieldID], nil
+}
+
+func isClosed(pr *github.PullRequest) bool {
+	return pr.ClosedAt != nil
 }
 
 func isDone(pr *github.PullRequest) bool {
@@ -263,8 +283,8 @@ func isTicketInProgress(ticket *jira.Issue) bool {
 }
 
 // Create new JIRA transition for issue, based on transition name provided in `status` parameter and preloaded transitions
-func changeTicketStatus(ticket *jira.Issue, status string, transitions []jira.Transition) error {
-	fmt.Printf("Changing %s status to %s\n", ticket.Key, status)
+func changeTicketStatus(ticket *jira.Issue, status string, transitions []jira.Transition, fields map[string]jira.TransitionField) error {
+	fmt.Printf("Changing %s status to %s with fields %s\n", ticket.Key, status, fields)
 	var found *jira.Transition
 
 	for _, transition := range transitions {
@@ -278,7 +298,7 @@ func changeTicketStatus(ticket *jira.Issue, status string, transitions []jira.Tr
 		return fmt.Errorf("Transition for %s to %s not found", ticket.Key, status)
 	}
 
-	jiraClient.Transition.Create(ticket.ID, found.ID)
+	jiraClient.Transition.Create(ticket.ID, found.ID, fields)
 
 	return nil
 }
