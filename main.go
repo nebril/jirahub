@@ -172,11 +172,11 @@ func initiateClients() error {
 func changeTicketStatusBasedOnPR(ticket jira.Issue, issuesPreloaded []github.Issue, pullRequestsPreloaded []github.PullRequest, linkChannel chan string, wg *sync.WaitGroup) {
 	defer wg.Done()
 	link, err := getPRLink(ticket)
-	linkChannel <- link
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
+	linkChannel <- link
 
 	pr, err := getPRByLink(link, pullRequestsPreloaded)
 	if err != nil {
@@ -387,10 +387,13 @@ func isOldEnough(pr *github.PullRequest) bool {
 
 func createNewJIRAIssueFromPR(pr github.PullRequest, sprint *jira.Sprint, wg *sync.WaitGroup) {
 	defer wg.Done()
-	jql := fmt.Sprintf("%s == \"%s\"", config.GitHubLinkFieldName, *pr.HTMLURL)
+	jql := fmt.Sprintf("%s = \"%s\"", config.GitHubLinkFieldName, *pr.HTMLURL)
 	opt := &jira.SearchOptions{StartAt: 0, MaxResults: 1}
 
 	issues, _, err := jiraClient.Issue.Search(jql, opt)
+	if err != nil {
+		fmt.Printf("Could not check for existing issue, not creating new one:%s\n", err)
+	}
 	if len(issues) > 0 {
 		fmt.Printf("Found existing issue for %s: %s, not creating new one\n", *pr.HTMLURL, issues[0].Key)
 		return
