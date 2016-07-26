@@ -241,7 +241,10 @@ func isClosed(pr *github.PullRequest) bool {
 }
 
 func isDone(pr *github.PullRequest) bool {
-	return pr.MergedAt != nil
+	if pr.Merged == nil {
+		return pr.MergedAt != nil
+	}
+	return *pr.Merged
 }
 
 func isTicketDone(ticket *jira.Issue) bool {
