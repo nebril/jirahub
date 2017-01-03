@@ -200,6 +200,12 @@ func changeTicketStatusBasedOnPR(ticket jira.Issue, issuesPreloaded []github.Iss
 				},
 			}
 			err = changeTicketStatus(&ticket, "Done", transitions, fields)
+			if err != nil {
+				err = changeTicketStatus(&ticket, "Start Development", transitions, nil)
+				if err != nil {
+					err = changeTicketStatus(&ticket, "In Progress", transitions, nil)
+				}
+			}
 		}
 	} else if isClosed(pr) {
 		if isTicketDone(&ticket) {
@@ -211,6 +217,12 @@ func changeTicketStatusBasedOnPR(ticket jira.Issue, issuesPreloaded []github.Iss
 				},
 			}
 			err = changeTicketStatus(&ticket, "Done", transitions, fields)
+			if err != nil {
+				err = changeTicketStatus(&ticket, "Start Development", transitions, nil)
+				if err != nil {
+					err = changeTicketStatus(&ticket, "In Progress", transitions, nil)
+				}
+			}
 		}
 	} else if isReviewed(pr, issuesPreloaded) {
 		if isTicketReviewed(&ticket) {
@@ -220,6 +232,9 @@ func changeTicketStatusBasedOnPR(ticket jira.Issue, issuesPreloaded []github.Iss
 		}
 	} else if !isTicketInProgress(&ticket) {
 		err = changeTicketStatus(&ticket, "Start Development", transitions, nil)
+		if err != nil {
+			err = changeTicketStatus(&ticket, "In Progress", transitions, nil)
+		}
 	}
 	if err != nil {
 		fmt.Println(err)
